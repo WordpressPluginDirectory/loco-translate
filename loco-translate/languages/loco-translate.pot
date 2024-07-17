@@ -1,9 +1,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: Loco Translate 2.6.9\n"
+"Project-Id-Version: Loco Translate 2.6.11\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/loco-translate/\n"
-"POT-Creation-Date: 2024-05-09 09:33+0000\n"
+"POT-Creation-Date: 2024-07-16 12:43+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: \n"
@@ -13,7 +13,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Loco https://localise.biz/\n"
-"X-Loco-Version: 2.6.9; wp-6.5.3\n"
+"X-Loco-Version: 2.6.11; wp-6.6-RC4-58723\n"
 "X-Domain: loco-translate"
 
 #. Author credit: (1) Product name (2) version number, (3) author name.
@@ -111,7 +111,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. Success notice where %s is a file extension, e.g. "PO"
-#: src/gettext/Compiler.php:289 src/admin/file/HeadController.php:81
+#: src/gettext/Compiler.php:291 src/admin/file/HeadController.php:81
 #, php-format
 msgid "%s file saved"
 msgstr ""
@@ -280,12 +280,12 @@ msgstr ""
 msgid "Advanced"
 msgstr ""
 
-#: src/admin/bundle/ConfController.php:140
+#: src/admin/bundle/ConfController.php:137
 #: tpl/admin/bundle/setup/inc-nav.php:19 tpl/admin/bundle/setup/core.php:17
 msgid "Advanced configuration"
 msgstr ""
 
-#: src/admin/bundle/ConfController.php:55
+#: src/admin/bundle/ConfController.php:52
 msgid "Advanced tab"
 msgstr ""
 
@@ -408,7 +408,7 @@ msgstr ""
 msgid "Check the translations marked with a warning sign"
 msgstr ""
 
-#: src/admin/bundle/ConfController.php:95
+#: src/admin/bundle/ConfController.php:92
 msgid "Child theme declares the same Text Domain as the parent theme"
 msgstr ""
 
@@ -526,7 +526,7 @@ msgstr ""
 msgid "Custom language"
 msgstr ""
 
-#: src/admin/bundle/ViewController.php:151
+#: src/admin/bundle/ViewController.php:152
 msgid "Custom translations may not work without System translations installed"
 msgstr ""
 
@@ -1097,7 +1097,7 @@ msgid "It needs configuring before you can do any translations"
 msgstr ""
 
 #. %s refers to a JSON file which could not be compiled due to an error
-#: src/gettext/Compiler.php:149 src/gettext/Compiler.php:212
+#: src/gettext/Compiler.php:149 src/gettext/Compiler.php:214
 #, php-format
 msgid "JSON compilation failed for %s"
 msgstr ""
@@ -1522,11 +1522,11 @@ msgstr ""
 msgid "PO file missing"
 msgstr ""
 
-#: src/gettext/Compiler.php:285
+#: src/gettext/Compiler.php:287
 msgid "PO file saved and MO file compiled"
 msgstr ""
 
-#: src/gettext/Compiler.php:282
+#: src/gettext/Compiler.php:284
 msgid "PO file saved and MO/JSON files compiled"
 msgstr ""
 
@@ -1730,7 +1730,7 @@ msgstr ""
 msgid "Start translating"
 msgstr ""
 
-#: src/admin/DebugController.php:884
+#: src/admin/DebugController.php:903
 msgid "String debugger"
 msgstr ""
 
