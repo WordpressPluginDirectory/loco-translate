@@ -23,6 +23,12 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
      */    
     private $output;
 
+    /**
+     * Current indent for recursive logging calls
+     * @var string
+     */
+    private $indent = '';
+
 
     /**
      * {@inheritdoc}
@@ -79,10 +85,39 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         }
         // redact any path information outside of WordPress root, and shorten any common locations
         $message = str_replace( [LOCO_LANG_DIR,WP_LANG_DIR,WP_CONTENT_DIR,ABSPATH], ['{loco_lang_dir}','{wp_lang_dir}','{wp_content_dir}','{abspath}'], $message );
-        $this->output[] = $message;
+        $this->output[] = $this->indent.$message;
     }
     
     
+    private function logDomainState( $domain ) {
+        $indent = $this->indent;
+        $this->indent = $indent.' . '; 
+        // filter callback should log determined locale, but may not be set up yet
+        $locale = determine_locale();
+        $this->log('determine_locale() == %s', $locale );
+        // Show the state just prior to potentially triggering JIT. There are no hooks between __() and load_textdomain().
+        global $l10n, $l10n_unloaded, $wp_textdomain_registry;
+        $this->log('$l10[%s] == %s', $domain, self::debugMember($l10n,$domain) );
+        $this->log('$l10n_unloaded[%s] == %s', $domain, self::debugMember($l10n_unloaded,$domain) );
+        $this->log('$wp_textdomain_registry->has(%s) == %b', $domain, $wp_textdomain_registry->has($domain) );
+        $this->log('is_textdomain_loaded(%s) == %b', $domain, is_textdomain_loaded($domain) );
+        // the following will fire more hooks, making mess of logs. We should already see this value above directly from $l10n[$domain]
+        // $this->log('  ? get_translations_for_domain(%s) == %s', $domain, self::debugType( get_translations_for_domain($domain) ) );
+        $this->indent = $indent;
+    }
+
+
+
+    private static function debugMember( array $data, $key ){
+        return self::debugType( array_key_exists($key,$data) ? $data[$key] : null );
+    }
+
+
+    private static function debugType( $value ){
+        return is_object($value) ? get_class($value) : json_encode($value,JSON_UNESCAPED_SLASHES);
+    }
+
+
     /**
      * `loco_unload_early_textdomain` filter callback.
      */
@@ -106,7 +141,9 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
 
 
     /**
+     * @deprecated
      * `loco_unseen_textdomain` action callback from the loading helper
+     * TODO This has been scrapped in rewritten helper. Move the logic somewhere else.
      */
     public function on_loco_unseen_textdomain( $domain ){
         if( $domain !== $this->domain ){
@@ -122,25 +159,6 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         else {
             $this->log('~ action:loco_unseen_textdomain: "%s" isn\'t loaded for "%s"',$domain,$locale);
         }
-        /*/ establishing who called the translation function early can't be known here.
-        // all we can detect from this backtrace is a (probably) legitimate translation that triggered the hook.
-        $breakable = false;
-        foreach( debug_backtrace(0) as $callee ){
-            if( array_key_exists('file',$callee) && '/wp-includes/l10n.php' === substr($callee['file'],-21) ){
-                $breakable = true;
-            }
-            else if( $breakable ){
-                $args = trim( json_encode($callee['args'],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES), '[]' );
-                if( array_key_exists('file',$callee) && array_key_exists('line',$callee) ){
-                    $ref = $callee['file'].':'.$callee['line'];
-                }
-                else {
-                    $ref = 'unknown';
-                }
-                $this->log('> %s(%s) called in %s', $callee['function'], $args, $ref );
-                break;
-            }
-        }*/
     }
 
 
@@ -171,7 +189,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
      */
     public function filter_load_textdomain_mofile( $mofile, $domain ){
         if( $domain === $this->domain ){
-            $this->log('~ filter:load_textdomain_mofile: %s', $mofile );
+            $this->log('~ filter:load_textdomain_mofile: %s (exists=%b)', $mofile, file_exists($mofile) );
         }
         return $mofile;
     }
@@ -180,9 +198,9 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
     /**
      * `load_translation_file` filter callback
      */
-    public function filter_load_translation_file( $file, $domain, $locale = '' ){
+    public function filter_load_translation_file( $file, $domain/*, $locale = ''*/ ){
         if( $domain === $this->domain ){
-            $this->log('~ filter:load_translation_file: %s (%s)', $file, $locale );
+            $this->log('~ filter:load_translation_file: %s (exists=%b)', $file, file_exists($file) );
         }
         return $file;
     }
@@ -282,7 +300,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         if( $args[$i] === $this->domain ){
             $args = array_slice($args,1,--$i);
             $opts = JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE;
-            $this->log('~ filter:gettext: %s =>%s', json_encode($args,$opts), json_encode($translation,$opts) );
+            $this->log('~ filter:gettext: %s => %s', json_encode($args,$opts), json_encode($translation,$opts) );
         }
         return $translation;
     }
@@ -417,6 +435,19 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
 
 
     /**
+     * Forcefully remove the no reload flag which prevents JIT loading.
+     * Note that since WP 6.7 load_(theme|plugin)_textdomain invokes JIT loader
+     */
+    private function unlockDomain( $domain ) {
+        global $l10n_unloaded;
+        if( is_array($l10n_unloaded) && isset($l10n_unloaded[$domain]) ){
+            $this->log('Removing JIT lock');
+            unset( $l10n_unloaded[$domain] );
+        }
+    }
+
+
+    /**
      * Prepare text domain for MO file lookup
      * @return void
      */
@@ -439,24 +470,17 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         // Without a loader the current state of the text domain will be used for our translation.
         // If the text domain was loaded before we set our locale, it may be in the wrong language.
         if( 'none' === $type ){
-            $loaded = is_textdomain_loaded($domain);
-            $this->log('No loader, is_textdomain_loaded() => %s', var_export($loaded,true) );
+            $this->log('No loader, current state is:');
+            $this->logDomainState($domain);
             // Note that is_textdomain_loaded() returns false even if NOOP_Translations is set,
             // and NOOP_Translations being set prevents JIT loading, so will never translate our forced locale!
             if( isset($GLOBALS['l10n'][$domain]) ){
                 // WordPress >= 6.5
                 if( class_exists('WP_Translation_Controller',false) ) {
                     $locale = WP_Translation_Controller::get_instance()->get_locale();
-                }
-                /*/ could get locale from actual file header, but not very reliable!
-                else if( $GLOBALS['l10n'][$domain] instanceof Translations ){
-                    $locale = $GLOBALS['l10n'][$domain]->get_header('Language');
-                }*/
-                else {
-                    $locale = '';
-                }
-                if( $locale && $locale !== $this->locale ){
-                    Loco_error_AdminNotices::warn( sprintf('Translations already loaded for "%s". A loader is recommended to select "%s"',$locale,$this->locale) );
+                    if( $locale && $locale !== $this->locale ){
+                        Loco_error_AdminNotices::warn( sprintf('Translations already loaded for "%s". A loader is recommended to select "%s"',$locale,$this->locale) );
+                    }
                 }
             }
             return;
@@ -482,6 +506,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
             $this->log('Calling load_plugin_textdomain with $plugin_rel_path=%s',$path);
             $returned = load_plugin_textdomain( $domain, false, $path );
             $callee = 'load_plugin_textdomain';
+            $this->unlockDomain($domain);
         }
         else if( 'theme' === $type || 'child' === $type ){
             // Note that absent path argument will use current theme, and not necessarily whatever $domain is
@@ -491,6 +516,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
             $this->log('Calling load_theme_textdomain with $path=%s',$path);
             $returned = load_theme_textdomain( $domain, $path );
             $callee = 'load_theme_textdomain';
+            $this->unlockDomain($domain);
         }
         else if( 'custom' === $type ){
             if( $file && ! $file->isAbsolute() ){
@@ -515,12 +541,11 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
             $callee = 'load_default_textdomain';
             $returned = load_default_textdomain($this->locale);
         }
-        // Defaulting to JIT:
+        // Defaulting to JIT (auto):
         // When we called unload_textdomain we passed $reloadable=false on purpose to force memory removal
         // So if we want to allow _load_textdomain_just_in_time, we'll have to hack the reloadable lock.
         else {
-            $this->log('Removing JIT lock');
-            unset( $GLOBALS['l10n_unloaded'][$this->domain] );
+            $this->unlockDomain($domain);
         }
         $this->log('> %s returned %s', $callee, var_export($returned,true) );
     }
@@ -596,6 +621,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         //
         $domain = $form['domain']?:'default';
         $this->log('Running test for domain => %s', $domain );
+        //$this->logDomainState($domain);
         $default = $this->get('default');
         $tag = $form['locale'] ?: $default['locale'];
         $locale = Loco_Locale::parse($tag);
@@ -631,6 +657,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         }
         // Deferred setting of text domain to avoid hooks firing before we're ready
         $this->domain = $domain;
+        //new Loco_hooks_LoadDebugger($domain);
 
         // Perform preloading according to user choice, and optional path argument.
         $type = $form['loader'];
@@ -673,7 +700,6 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
                 $this->addHook('ngettext_with_context', 'temp_filter_gettext', 6, 99 );
             }
         }
-        //
         $this->log('Calling %s( %s )', $callee, trim( json_encode($params,JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE), '[]') );
         $msgstr = call_user_func_array($callee,$params);
         $this->log("====>| %s", LocoPo::pair('msgstr',$msgstr,0) );
@@ -682,7 +708,7 @@ class Loco_admin_DebugController extends Loco_mvc_AdminController {
         $loaded = get_translations_for_domain($domain);
         if( ! is_textdomain_loaded($domain) ){
             $this->log('! Text domain not loaded after %s() call completed', $callee );
-            $this->log('? get_translations_for_domain => %s', is_object($loaded)?get_class($loaded):var_export($loaded,true));
+            $this->log('  get_translations_for_domain => %s', self::debugType($loaded) );
         }
 
         // Establish retrospectively if a non-zero plural index was used.

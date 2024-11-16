@@ -3,8 +3,8 @@ Contributors: timwhitlock
 Tags: translation, language, multilingual, l10n, i18n
 Requires at least: 5.2
 Requires PHP: 5.6.20
-Tested up to: 6.6.0
-Stable tag: 2.6.11
+Tested up to: 6.7
+Stable tag: 2.6.12
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -99,6 +99,13 @@ We don't collect your data or snoop on you. See the [plugin privacy notice](http
 
 
 == Changelog ==
+
+= 2.6.12 =
+* Major fix to custom load_textdomain loader. Works when original file is absent
+* Fixed bug in template comparison when JSON files need to be merged
+* CSS fixes including reinstating of unsaved "star" icon
+* Domain listener fixed for JIT loading
+* Bumped WordPress compatibility to 6.7
 
 = 2.6.11 =
 * Removed accidental console trace
@@ -537,7 +544,7 @@ We don't collect your data or snoop on you. See the [plugin privacy notice](http
 
 == Upgrade Notice ==
 
-= 2.6.11 =
+= 2.6.12 =
 * Various improvements and bug fixes
 
 

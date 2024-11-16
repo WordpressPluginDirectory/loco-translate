@@ -3,32 +3,17 @@
  * Text Domain loading helper.
  * Ensures custom translations can be loaded from `wp-content/languages/loco`.
  * This functionality is optional. You can disable the plugin if you're not loading MO or JSON files from languages/loco
+ * 
+ * @noinspection DuplicatedCode
+ * @noinspection PhpUnused
  */
 class Loco_hooks_LoadHelper extends Loco_hooks_Hookable {
-    
-    /**
-     * theme/plugin text domain loading context in progress
-     * @var string[] [ $subdir, $domain, $locale ]
-     */
-    private $context;
 
     /**
-     * Protects against recursive calls to load_textdomain()
-     * @var bool[]
-     */    
-    private $lock = [];
-
-    /**
-     * Custom/safe directory path with trailing slash
-     * @var string
+     * Cache of custom locations passed from load_plugin_textdomain and load_theme_textdomain
+     * @var string[]
      */
-    private $base;
-
-    /**
-     * Locations that can be mapped to equivalent paths under custom directory
-     * @var array[]
-     */
-    private $map = [];
+    private $custom = [];
 
     /**
      * Deferred JSON files under our custom directory, indexed by script handle
@@ -37,173 +22,58 @@ class Loco_hooks_LoadHelper extends Loco_hooks_Hookable {
     private $json = [];
 
     /**
-     * Registry of text domains we've seen, whether loaded or not. This will catch early JIT problem.
+     * Recursion lock, contains the current mofile being processed indexed by the domain
+     * @var string[]
      */
-    private $seen = [];
-    
+    private $lock = [];
 
     /**
-     * {@inheritDoc}
+     * The current MO file being loaded during the initial call to load_textdomain
      */
-    public function __construct(){
-        parent::__construct();
-        $this->base = trailingslashit( loco_constant('LOCO_LANG_DIR') );
-        // add system locations which have direct equivalent custom/safe locations under LOCO_LANG_DIR
-        // not adding theme paths because as long as load_theme_textdomain is used they will be mapped by context.
-        $this->add('', loco_constant('WP_LANG_DIR') )
-             ->add('plugins/', loco_constant('WP_PLUGIN_DIR') )
-             ->add('plugins/', loco_constant('WPMU_PLUGIN_DIR') )
-        ;
-        // Text domains loaded prematurely won't be customizable, unless explicitly loaded later.
-        // Use the loco_unload_early_textdomain filter to force unloading. Not doing so may fire loco_unseen_textdomain later.
-        global $l10n;
-        if( $l10n && is_array($l10n) ){
-            foreach( $l10n as $domain => $value ){
-                if( apply_filters('loco_unload_early_textdomain',false,$domain,$value) ){
-                    unload_textdomain($domain);
-                    unset($GLOBALS['l10n_unloaded'][$domain]);
-                    do_action('loco_unloaded_textdomain',$domain);
-                }
+    private $mofile = '';
+
+    /**
+     * The current domain being loaded during the initial call to load_textdomain
+     */
+    private $domain = '';
+
+
+    /**
+     * Filter callback for `pre_get_language_files_from_path`
+     * Called from {@see WP_Textdomain_Registry::get_language_files_from_path}
+     * Path will be either WP_LANG_DIR/plugins', WP_LANG_DIR/themes or a user-defined location
+     */
+    public function filter_pre_get_language_files_from_path( $files, $path ){
+        $len = strlen( loco_constant('WP_LANG_DIR') );
+        $rel = substr($path,$len);
+        if( '/' !== $rel && '/plugins/' !== $rel && '/themes/' !== $rel ){
+            // custom location is likely to be inside a theme or plugin, but could be anywhere
+            if( Loco_fs_Locations::getPlugins()->check($path) ){
+                $this->custom[$path] = 'plugins';
             }
-        }
-    }
-
-
-    /**
-     * Add a mappable location
-     * @param string $subdir
-     * @param string $path
-     * @return self
-     */
-    private function add( $subdir, $path ){
-        if( $path ){
-            $path = trailingslashit($path);
-            $this->map[] = [ $subdir, $path, strlen($path) ];
-        }
-        return $this;
-    }
-
-
-    /**
-     * Map a file directly from a standard system location to LOCO_LANG_DIR.
-     * - this does not check if file exists, only what the path should be.
-     * - this does not handle filename differences (so won't work with themes)
-     * @param string $path e.g. {WP_CONTENT_DIR}/languages/plugins/foo or {WP_PLUGIN_DIR}/foo/anything/foo
-     * @return string e.g. {WP_CONTENT_DIR}/languages/loco/plugins/foo
-     */
-    private function resolve( $path ){
-        foreach( $this->map as $data ){
-            list($subdir,$prefix,$len) = $data;
-            if( substr($path,0,$len) === $prefix ){
-                if( '' === $subdir ){
-                    return $this->base.substr($path,$len);
-                }
-                return $this->base.$subdir.basename($path);
+            else if( Loco_fs_Locations::getThemes()->check($path) ){
+                $this->custom[$path] = 'themes';
             }
+            // folder could be plugin-specific, e.g. languages/woocommerce,
+            // but this won't be merged with custom because it IS custom.
         }
-        return '';
+        return $files;
     }
 
 
     /**
-     * `theme_locale` filter callback.
-     * Signals the beginning of a "load_theme_textdomain" process
-     * @param string $locale
-     * @param string $domain
-     * @return string
-     */
-    public function filter_theme_locale( $locale, $domain = '' ){
-        $this->context = [ 'themes/', $domain, $locale ];
-        unset( $this->lock[$domain] );
-        return $locale;
-    }
-
-
-    /**
-     * `plugin_locale` filter callback.
-     * Signals the beginning of a "load_plugin_textdomain" process
-     * @param string $locale
-     * @param string $domain
-     * @return string
-     */
-    public function filter_plugin_locale( $locale, $domain = '' ){
-        $this->context = [ 'plugins/', $domain, $locale ];
-        unset( $this->lock[$domain] );
-        return $locale;
-    }
-
-
-    /**
-     * `unload_textdomain` action callback.
-     * Lets us release the lock, so that the custom file may be loaded again (hopefully for another locale)
-     * @param string $domain
-     * @return void
-     */
-    public function on_unload_textdomain( $domain ){
-        unset( $this->lock[$domain] );
-    }
-
-
-    /**
-     * `load_textdomain` action callback.
-     * Lets us load our custom translations before WordPress loads what it had already decided to load.
-     * We're deliberately not stopping WordPress loading $mopath, if it exists it will be merged on top of our custom strings.
-     * @param string $domain
-     * @param string $mopath
-     * @return void
-     */
-    public function on_load_textdomain( $domain, $mopath ){
-        $key = '';
-        $this->seen[$domain] = true;
-        // domains may be split into multiple files
-        $name = pathinfo( $mopath, PATHINFO_FILENAME );
-        if( $lpos = strrpos( $name, '-') ){
-            $slug = substr( $name, 0, $lpos );
-            if( $slug !== $domain ){
-                $key = $slug;
-            }
-        }
-        // avoid recursion when we've already handled this domain/slug
-        if( isset($this->lock[$domain][$key]) ){
-            return;
-        }
-        // if context is set, then a theme or plugin initialized the loading process properly
-        if( is_array($this->context) ){
-            list( $subdir, $_domain, $locale ) = $this->context;
-            $this->context = null;
-            if( $_domain !== $domain ){
-                return;
-            }
-            $mopath = $this->base.$subdir.$domain.'-'.$locale.'.mo';
-        }
-        // else load_textdomain must have been called directly, including to load core domain
-        else {
-            $mopath = $this->resolve($mopath);
-            if( '' === $mopath ){
-                return;
-            }
-        }
-        // Load our custom translations avoiding recursion back into this hook
-        $this->lock[$domain][$key] = true;
-        load_textdomain( $domain, $mopath );
-    }
-
-
-
-    /**
-     * `lang_dir_for_domain` filter callback, requires WP>=6.6
+     * Filter callback for `lang_dir_for_domain`
+     * Called from {@see WP_Textdomain_Registry::get} after path is obtained from {@see WP_Textdomain_Registry::get_path_from_lang_dir}
      */
     public function filter_lang_dir_for_domain( $path, $domain, $locale ){
-        // Empty path likely means JIT invocation with no system file installed.
-        // This fix allows our custom files to be picked up, but not author provided files.
-        if( ! $path ){
-            foreach( ['plugins','themes'] as $type ){
-                $dir = LOCO_LANG_DIR.'/'.$type.'/';
-                if( is_dir($dir) ){
-                    $base = $dir.$domain.'-'.$locale;
-                    if( file_exists($base.'.mo') || file_exists($base.'.l10n.php') ){
-                        return $dir;
-                    }
+        // If path is false it means no system or author files were found. This will stop WordPress trying to load anything.
+        // Usually this occurs during true JIT loading, where an author path would not be set by e.g. load_plugin_textdomain.
+        if( false === $path ){
+            $base = loco_constant('LOCO_LANG_DIR');
+            foreach( ['/plugins/','/themes/'] as $type ){
+                if( self::try_readable($base.$type.$domain.'-'.$locale.'.mo') ){
+                    $path = $base.$type;
+                    break;
                 }
             }
         }
@@ -212,66 +82,125 @@ class Loco_hooks_LoadHelper extends Loco_hooks_Hookable {
 
 
     /**
-     * Alert to the early JIT loading issue for any text domain queried before we've seen it be loaded. 
+     * Triggers a new round of load_translation_file attempts.
      */
-    private function handle_unseen_textdomain( $domain ){
-        if( ! array_key_exists($domain,$this->seen) ){
-            $this->seen[$domain] = true;
-            do_action('loco_unseen_textdomain',$domain);
+    public function on_load_textdomain( $domain, $mofile ){
+        if( isset($this->lock[$domain]) ){
+            // may be recursion for our custom file
+            if( $this->lock[$domain] === $mofile ){
+                return;
+            }
+            // else a new file, so release the lock
+            unset($this->lock[$domain]);
         }
+        // flag whether the original MO file (or a valid sibling) exists for this load.
+        // we could check this during filter_load_translation_file but this saves doing it multiple times
+        $this->mofile = self::try_readable($mofile);
+        // Setting the domain just in case someone is applying filters manually in a strange order
+        $this->domain = $domain;
     }
 
 
     /**
-     * `gettext` filter callback. Enabled only in Debug mode.
+     * Filter callback for `load_translation_file`
+     * Called from {@see load_textdomain} multiple times for each file format in preference order.
      */
-    public function debug_gettext( $translation = '', $text = '', $domain = '' ){
-        $this->handle_unseen_textdomain($domain?:'default');
-        return $translation;
+    public function filter_load_translation_file( $file, $domain, $locale ){
+        // domain mismatch would be unexpected during normal execution, but anyone could apply filters.
+        if( $domain !== $this->domain ){
+            return $file;
+        }
+        // skip recursion for our own custom file:
+        if( isset($this->lock[$domain]) ){
+            return $file;
+        }
+        // loading a custom file directly is fine, although above lock will prevent in normal situations
+        $path = dirname($file).'/';
+        $custom = loco_constant('LOCO_LANG_DIR').'/';
+        if( $path === $custom || str_starts_with($file,$custom) ){
+            return $file;
+        }
+        // map system file to custom location if possible. e.g. languages/foo => languages/loco/foo
+        // this will account for most installed translations which have been customized.
+        $system = loco_constant('WP_LANG_DIR').'/';
+        if( str_starts_with($file,$system) ){
+            $mapped = substr_replace($file,$custom,0,strlen($system) );
+        }
+        // custom path may be author location, meaning it's under plugin or theme directories
+        else if( array_key_exists($path,$this->custom) ){
+            $ext = explode( '.', basename($file), 2 )[1];
+            $mapped = $custom.$this->custom[$path].'/'.$domain.'-'.$locale.'.'.$ext;
+        }
+        // otherwise we'll assume the custom path is not intended to be further customized.
+        else {
+            return $file;
+        }
+        // When the original file isn't found, calls to load_textdomain will return false and overwrite our custom file.
+        // Here we'll simply return our mapped version, whether it exists or not. WordPress will treat is as the original.
+        if( '' === $this->mofile ){
+            return $mapped;
+        }
+        // We know that the original file will eventually be found (even if via a second file attempt)
+        // This requires a recursive call to load_textdomain for our custom file, WordPress will handle if it exists.
+        $mapped = self::to_mopath($mapped);
+        $this->lock[$domain] = $mapped;
+        load_textdomain( $domain, $mapped, $locale );
+        /*/ Sanity check that original file does exist, and it's the one we're expecting:
+        if( '' === self::try_readable($file) || self::to_mopath($file) !== $this->mofile ){
+            throw new LogicException;
+        }*/
+        // Return original file, which we've established does exist, or if it doesn't another extension might
+        return $file;
     }
 
 
     /**
-     * `ngettext` filter callback. Enabled only in Debug mode.
+     * Fix any file extension to use .mo
      */
-    public function debug_ngettext( $translation = '', $single = '', $plural = '', $number = 0, $domain = '' ){
-        $this->handle_unseen_textdomain($domain?:'default');
-        return $translation;
+    private static function to_mopath( $path ){
+        if( str_ends_with($path,'.mo') ){
+            return $path;
+        }
+        // path should only be a .l10n.php file, but could be something custom
+        return dirname($path).'/'.explode('.', basename($path),2)[0].'.mo';
     }
 
 
     /**
-     * `gettext_with_context` filter callback. Enabled only in Debug mode.
+     * Check .mo or .php file is readable, and return the .mo file if so.
+     * Note that load_textdomain expects a .mo file, even if it ends up using .l10n.php
      */
-    public function debug_gettext_with_context( $translation = '', $text = '', $context = '', $domain = '' ){
-        $this->handle_unseen_textdomain($domain?:'default');
-        return $translation;
+    private static function try_readable( $path ){
+        $mofile = self::to_mopath($path);
+        if( is_readable($mofile) || is_readable(substr($path,0,-2).'l10n.php') ){
+            return $mofile;
+        }
+        return '';
     }
+    
+    
+    
+    // JSON //
 
 
     /**
-     * `ngettext_with_context` filter callback. Enabled only in Debug mode.
-     */
-    public function debug_ngettext_with_context( $translation = '', $single = '', $plural = '', $number = 0, $context = '', $domain = '' ){
-        $this->handle_unseen_textdomain($domain?:'default');
-        return $translation;
-    }
-
-
-    /*
      * `load_script_translation_file` filter callback
      * Alternative method to merging in `pre_load_script_translations`
-     * @param string|false candidate JSON file (false on final attempt)
-     * @param string
+     * @param string|false $path candidate JSON file (false on final attempt)
+     * @param string $handle
      * @return string
      */
     public function filter_load_script_translation_file( $path = '', $handle = '' ){
         // currently handle-based JSONs for author-provided translations will never map.
         if( is_string($path) && preg_match('/^-[a-f0-9]{32}\\.json$/',substr($path,-38) ) ){
-            $custom = $this->resolve($path);
-            if( $custom && is_readable($custom) ){
-                // Defer until either JSON is resolved or final attempt passes an empty path.
-                $this->json[$handle] = $custom;
+            $system = loco_constant('WP_LANG_DIR').'/';
+            $custom = loco_constant('LOCO_LANG_DIR').'/';
+            if( str_starts_with($path,$system) ){
+                $mapped = substr_replace($path,$custom,0,strlen($system) );
+                // Defer merge until either JSON is resolved or final attempt passes an empty path.
+                if( is_readable($mapped) ){
+                    $this->json[$handle] = $mapped;
+                }
             }
         }
         // If we return an unreadable file, load_script_translations will not fire.
@@ -287,7 +216,7 @@ class Loco_hooks_LoadHelper extends Loco_hooks_Hookable {
     /**
      * `load_script_translations` filter callback.
      * Merges custom translations on top of installed ones, as late as possible.
-     * @param string $json contents of JSON file that WordPress has read 
+     * @param string $json contents of JSON file that WordPress has read
      * @param string $path path relating to given JSON (not used here)
      * @param string $handle script handle for registered merge
      * @return string final JSON translations
@@ -341,31 +270,12 @@ class Loco_hooks_LoadHelper extends Loco_hooks_Hookable {
 
     /**
      * Test if unserialized JSON is a valid JED structure
-     * @param array $jed
+     * @param array[] $jed
      * @return bool
      */
     private static function jedValid( $jed ){
-        return is_array($jed) &&  array_key_exists('locale_data',$jed) && is_array($jed['locale_data']) && $jed['locale_data'];
+        return is_array($jed) && array_key_exists('locale_data',$jed) && is_array($jed['locale_data']) && $jed['locale_data'];
     }
-
-
-    /*
-     * Alternative merging method using `script_loader_tag` filter callback.
-     * We could load two JSONs via two calls to wp.i18n.setLocaleData BUT WordPress closure makes it difficult/unreliable.
-     * @param string candidate JSON file
-     * @param string
-     * @param string
-     * @return string
-     *
-    public function filter_script_loader_tag( $tag = '', $handle = '', $src = '' ){
-        if( array_key_exists($handle,$this->json) ){
-            $json = file_get_contents($this->json[$handle] );
-            unset($this->json[$handle]);
-            // splice custom translations between original ones and the script they're attached to.
-            list( $foo, $bar ) = explode('</script>',$tag,2);
-            $tag = $foo."\n console.log({$json});</script>".$bar;
-        }
-        return $tag;
-    }*/
     
+
 }
