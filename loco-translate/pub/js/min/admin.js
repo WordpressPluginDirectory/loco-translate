@@ -2701,7 +2701,7 @@ return (this.rendered ? this.live : this.dead).offsetTop;
 };
 c.height = function() {
 let a = this.h;
-null == a && (this.h = a = this.rendered ? this.live.firstChild.offsetHeight : this.dead.offsetHight);
+null == a && (this.h = a = this.rendered ? this.live.firstChild.offsetHeight : this.dead.offsetHeight);
 a || y("row has zero height");
 return a;
 };
@@ -5506,7 +5506,7 @@ B.require("$26", "tables.js").init(v);
 });
 U.validate = function(w) {
 w = /^\d+\.\d+\.\d+/.exec(w && w[0] || "");
-if ("2.6.12" === (w && w[0])) return !0;
+if ("2.6.14" === (w && w[0])) return !0;
 U.notices.warn("admin.js is the wrong version. Please empty all relevant caches and reload this page.");
 return !1;
 };
